@@ -17,5 +17,23 @@ function apply(o){fields.forEach(k=>{const e=$('#'+k);if(o[k]!==undefined){if(e.
 function download(name,body,type){const a=document.createElement('a'),url=URL.createObjectURL(new Blob([body],{type}));a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),3000)}
 fields.forEach(k=>{$('#'+k).addEventListener('input',recalc);$('#'+k).addEventListener('change',recalc)});$('#add').onclick=()=>row();$('#print').onclick=()=>window.print();$('#save').onclick=()=>download('Nano4You_'+(($('#cliente').value||'vistoria').replace(/[^a-z0-9À-ÿ_-]+/gi,'_'))+'.json',JSON.stringify(collect(),null,2),'application/json');$('#loadBtn').onclick=()=>$('#load').click();$('#load').onchange=async e=>{const file=e.target.files[0];if(!file)return;try{const o=JSON.parse(await file.text());if(!o||!Array.isArray(o.trechos))throw new Error();apply(o);alert('Ficha importada.')}catch{alert('Não foi possível importar esta ficha.')}e.target.value=''};$('#clear').onclick=()=>{if(confirm('Limpar os dados atuais e começar nova vistoria?')){apply({preco:'85',adicionais:'0',desconto:'0',data:new Date().toLocaleDateString('en-CA'),trechos:[{},{},{}]});photoUrls.forEach(u=>URL.revokeObjectURL(u));photoUrls=[];$('#photoPreview').innerHTML='';$('#fotos').value=''}};
 $('#fotos').onchange=e=>{photoUrls.forEach(u=>URL.revokeObjectURL(u));photoUrls=[];$('#photoPreview').innerHTML='';[...e.target.files].slice(0,8).forEach(f=>{const u=URL.createObjectURL(f);photoUrls.push(u);const img=document.createElement('img');img.src=u;img.alt='Foto da fachada';$('#photoPreview').append(img)})};$('#wa').onclick=()=>{const c=collect(),v=recalc();const msg=`*NANO4YOU | ORÇAMENTO PRELIMINAR*\nCliente: ${c.cliente||'Não informado'}\nImóvel: ${c.endereco||''} - ${c.cidade||''}\nÁrea medida: ${v.area.toFixed(2)} m²\nPreço unitário: ${fmt(num(c.preco))}/m²\nValor-base: ${fmt(v.base)}\nCustos adicionais: ${fmt(num(c.adicionais))}\nDesconto: ${fmt(num(c.desconto))}\n*Total estimado: ${fmt(v.total)}*\nPrazo: ${c.prazo||'A definir'}\nValidade: ${c.validade||'A definir'}\nSujeito à confirmação técnica.\nNano4You: (47) 98824-6018`;window.open('https://wa.me/?text='+encodeURIComponent(msg),'_blank','noopener,noreferrer')};try{const saved=JSON.parse(localStorage.getItem(key)||'null');if(saved&&saved.trechos)apply(saved);else apply({preco:'85',adicionais:'0',desconto:'0',data:new Date().toLocaleDateString('en-CA'),trechos:[{},{},{}]})}catch{apply({preco:'85',trechos:[{},{},{}]})}
+window.NanoBridge={collect,apply,recalc};
 })();
-</script></body></html>
+</script>
+<style>
+#nanoAccess{position:fixed;inset:0;z-index:9999;background:#eef6fb;display:flex;align-items:center;justify-content:center;padding:16px}
+#nanoAccess .login{width:min(430px,100%);padding:28px;background:white;border-radius:18px;box-shadow:0 20px 65px #12304d22}
+#nanoAccess h2{margin-bottom:12px}#nanoAccess label{margin-top:12px}#nanoAccess button{margin-top:16px;width:100%}
+#nanoBar{display:none;position:sticky;top:0;z-index:20;background:#073a65;color:white;padding:9px 14px;align-items:center;gap:10px;flex-wrap:wrap}
+#nanoBar button{padding:8px 11px;background:#dcebf3;color:#073a65;font-size:13px}#nanoBar span{font-size:13px;margin-right:auto}
+#nanoHistory{display:none;max-width:1040px;margin:12px auto;padding:18px;background:#fff;border-radius:14px}
+#nanoHistory li{padding:8px;border-bottom:1px solid #e4edf4}#nanoFlash{font-size:12px;color:#e9ffff}
+#nanoBar .nanoOnline{color:#bdf7da}#nanoAccess .error{color:#a22;font-size:13px;white-space:pre-wrap}
+@media print{#nanoBar,#nanoHistory,#nanoAccess{display:none!important}}
+</style>
+<div id="nanoAccess"><div class="login"><h2>Nano4You · Acesso à equipe</h2><p>Entre uma vez com seu usuário autorizado. A vistoria poderá continuar offline neste aparelho.</p><label>E-mail</label><input id="nanoEmail" type="email" autocomplete="username"><label>Senha</label><input id="nanoPassword" type="password" autocomplete="current-password"><button id="nanoLogin">Entrar</button><p id="nanoLoginMsg" class="error"></p><p class="muted">Primeiro acesso exige internet. Nunca compartilhe a senha. Em aparelho compartilhado, use Sair e apague os dados locais.</p></div></div>
+<div id="nanoBar"><span id="nanoWho"></span><span id="nanoFlash"></span><button id="nanoCloudSave">Salvar / sincronizar vistoria</button><button id="nanoSyncPending">Sincronizar pendentes</button><button id="nanoHistoryBtn">Histórico</button><button id="nanoExit">Sair</button></div>
+<section id="nanoHistory"><h2>Orçamentos sincronizados</h2><p class="muted">Os registros aqui exibidos dependem do acesso autorizado pelo Supabase. Rascunhos offline permanecem neste navegador até sincronização.</p><div id="nanoHistoryList"></div><button id="nanoCloseHistory">Fechar histórico</button></section>
+<script src="config.js"></script>
+<script defer src="nano-app.js"></script>
+</body></html>
