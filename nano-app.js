@@ -43,7 +43,7 @@ function nanoMarkRequiredErrors(missing){
  box.append(intro,list);box.style.display='block';
 }
 for(const [key] of nanoRequiredFields){$(key)?.addEventListener('input',()=>{const missing=nanoRequiredFields.filter(([id])=>!$(id)?.value.trim());nanoMarkRequiredErrors(missing)})}
-function validate(d){const missing=nanoRequiredFields.filter(([key])=>!String(d[key]||'').trim());nanoMarkRequiredErrors(missing);if(missing.length){$(missing[0][0])?.focus();throw Error('Faltam '+missing.length+' campo(s) obrigatório(s), destacados em vermelho no cadastro.');}const v=S.recalc();if(!(v.area>0))throw Error('Informe largura e altura dos trechos.');if(!profile)throw Error('Faça login antes de salvar.');if(profile.perfil!=='administrador'&&(Number(d.preco)!==85||Number(d.desconto)!==0||Number(d.adicionais)!==0))throw Error('Preço e descontos são exclusivos do administrador.');return v}
+function validate(d){const missing=nanoRequiredFields.filter(([key])=>!String(d[key]||'').trim());if(!['pag_pix','pag_debito','pag_credito','pag_dinheiro'].some(k=>d[k]===true))throw Error('Selecione ao menos uma forma de pagamento antes de salvar a vistoria.');nanoMarkRequiredErrors(missing);if(missing.length){$(missing[0][0])?.focus();throw Error('Faltam '+missing.length+' campo(s) obrigatório(s), destacados em vermelho no cadastro.');}const v=S.recalc();if(!(v.area>0))throw Error('Informe largura e altura dos trechos.');if(!profile)throw Error('Faça login antes de salvar.');if(profile.perfil!=='administrador'&&(Number(d.preco)!==85||Number(d.desconto)!==0||Number(d.adicionais)!==0))throw Error('Preço e descontos são exclusivos do administrador.');return v}
 function queue(){try{return JSON.parse(localStorage.getItem(pendingKey())||'[]')}catch{return []}}
 function setQueue(q){localStorage.setItem(pendingKey(),JSON.stringify(q))}
 // Fotos são guardadas em IndexedDB para sobreviver a recargas e períodos offline.
@@ -74,6 +74,130 @@ $('nanoSyncPending').onclick=syncQueue;
 $('nanoLogin').onclick=login;$('nanoPassword').addEventListener('keydown',e=>{if(e.key==='Enter')login()});
 $('nanoExit').onclick=()=>{if(!confirm('Sair da conta neste aparelho? Rascunhos offline permanecerão armazenados localmente.'))return;session=null;profile=null;localStorage.removeItem(sessionKey);S.apply({cliente:'',responsavel:'',whatsapp:'',endereco:'',cidade:'',vendedor:'',numero:'',preco:'85',adicionais:'0',desconto:'0',trechos:[{},{},{}]});hideApp()};
 async function showOrderPhotos(orderId,sellerId,target){const host=target||$('nanoHistory');const box=host.querySelector('#nanoPhotosResult')||document.createElement('div');box.id='nanoPhotosResult';box.textContent='Carregando fotos...';host.append(box);try{const sellers=await request('/rest/v1/nano_vendedores?select=auth_user_id&id=eq.'+encodeURIComponent(sellerId));const owner=sellers?.[0]?.auth_user_id;if(!owner)throw Error('Não foi possível identificar o vendedor.');await refreshIfNeeded();const prefix=`${owner}/${orderId}/`;const r=await fetch(URLBASE+'/storage/v1/object/list/nano4you-fotos',{method:'POST',headers:tokenHeaders(),body:JSON.stringify({prefix,limit:20,offset:0})});if(!r.ok)throw Error((await r.text()).slice(0,180));const files=(await r.json()).filter(f=>/\.(jpg|jpeg|png|webp)$/i.test(f.name));box.replaceChildren();const heading=document.createElement('p');heading.textContent=`Fotos do orçamento: ${files.length}`;box.append(heading);for(const f of files){const path=prefix+f.name;await refreshIfNeeded();const resp=await fetch(URLBASE+'/storage/v1/object/authenticated/nano4you-fotos/'+path.split('/').map(encodeURIComponent).join('/'),{headers:{apikey:KEY,Authorization:'Bearer '+session.access_token}});if(!resp.ok)throw Error('Não foi possível abrir uma das fotos.');const blob=await resp.blob();const url=URL.createObjectURL(blob);const img=document.createElement('img');img.src=url;img.alt='Fotografia da fachada';img.style.cssText='max-width:180px;max-height:140px;object-fit:cover;margin:5px;border-radius:8px;cursor:pointer';img.onclick=()=>window.open(url,'_blank');box.append(img);setTimeout(()=>URL.revokeObjectURL(url),5*60*1000)}if(!files.length)box.append(document.createTextNode('Nenhuma foto enviada para este orçamento.'))}catch(e){box.textContent='Erro ao visualizar fotos: '+e.message}}
+
+// Propostas imprimíveis a partir do orçamento sincronizado: o navegador salva como PDF.
+const nanoProposalEscape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const nanoProposalText=v=>nanoProposalEscape(v||'Não informado');
+function nanoProposalDate(v){if(!v)return 'A definir';const d=new Date(v.length===10?v+'T12:00:00':v);return Number.isNaN(d.getTime())?nanoProposalText(v):d.toLocaleDateString('pt-BR')}
+async function nanoProposalImages(orderId,sellerId){
+  const sellers=await request('/rest/v1/nano_vendedores?select=auth_user_id&id=eq.'+encodeURIComponent(sellerId));
+  const owner=sellers?.[0]?.auth_user_id;if(!owner)return [];
+  await refreshIfNeeded();const prefix=`${owner}/${orderId}/`;
+  const r=await fetch(URLBASE+'/storage/v1/object/list/nano4you-fotos',{method:'POST',headers:tokenHeaders(),body:JSON.stringify({prefix,limit:25,offset:0})});
+  if(!r.ok)throw Error('Não foi possível listar as fotos do orçamento.');
+  const files=(await r.json()).filter(x=>/\.(jpg|jpeg|png|webp)$/i.test(x.name)).slice(0,6);
+  const pictures=[];
+  for(const f of files){
+    await refreshIfNeeded();
+    const url=URLBASE+'/storage/v1/object/authenticated/nano4you-fotos/'+(prefix+f.name).split('/').map(encodeURIComponent).join('/');
+    const resp=await fetch(url,{headers:{apikey:KEY,Authorization:'Bearer '+session.access_token}});
+    if(!resp.ok)throw Error('Não foi possível carregar uma fotografia.');
+    const blob=await resp.blob();
+    const dataUrl=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(Error('Foto indisponível'));reader.readAsDataURL(blob)});
+    pictures.push(dataUrl);
+  }
+  return pictures;
+}
+async function nanoGenerateProposal(order,kind){
+  // Abrir a janela no clique evita bloqueio de pop-up durante consultas assíncronas.
+  const popup=window.open('','_blank');
+  if(!popup){alert('O navegador bloqueou a janela da proposta. Autorize pop-ups para a Nano4You e tente novamente.');return}
+  popup.document.write('<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>Preparando proposta Nano4You</title><body style="font:16px system-ui;padding:30px">Preparando proposta comercial... Aguarde.</body></html>');popup.document.close();
+  try{
+    const [orders,clients,sellers]=await Promise.all([
+      request('/rest/v1/nano_orcamentos?select=id,numero_orcamento,cliente_id,vendedor_id,area_m2,valor_m2,valor_adicional,desconto,valor_total,observacoes,created_at&id=eq.'+encodeURIComponent(order.id)),
+      request('/rest/v1/nano_clientes?select=id,nome_cliente,responsavel,telefone,endereco,cidade&id=eq.'+encodeURIComponent(order.cliente_id)),
+      request('/rest/v1/nano_vendedores?select=id,nome&id=eq.'+encodeURIComponent(order.vendedor_id))
+    ]);
+    const o=orders?.[0],c=clients?.[0],v=sellers?.[0];
+    if(!o||!c)throw Error('Não foi possível consultar os dados atualizados do orçamento e do cliente.');
+    let record={};try{record=JSON.parse(o.observacoes||'{}')}catch{}const ficha=record.ficha||{};
+    let images=[];let imageWarning='';
+    if(kind==='completa')try{images=await nanoProposalImages(o.id,o.vendedor_id)}catch(e){imageWarning='Fotografias não disponíveis nesta emissão. '+e.message}
+    const total=Number(o.valor_total||0),gross=Number(o.area_m2||0)*Number(o.valor_m2||0),additional=Number(o.valor_adicional||0),discount=Number(o.desconto||0);
+    const number=nanoProposalText(o.numero_orcamento||'Sem numeração - orçamento antigo');
+    const money=n=>nanoProposalEscape(nanoDiscountAmount(n));
+    const line=(k,val)=>`<div class="detail"><span>${k}</span><b>${val}</b></div>`;
+    const pics=images.length?`<section class="photo-section"><h2>Registro fotográfico da fachada</h2><p class="photo-intro">Imagens registradas durante a vistoria, apresentadas para identificação das condições encontradas.</p><div class="photos ${images.length===1?'photos-single':''}">${images.map((src,i)=>`<figure><img src="${src}" alt="Foto da fachada ${i+1}"><figcaption>Foto ${i+1} · Registro da vistoria</figcaption></figure>`).join('')}</div></section>`:'';
+    const areas=Array.isArray(ficha.trechos)?ficha.trechos.filter(t=>Number(t.largura)>0&&Number(t.altura)>0):[];
+    const trHtml=areas.length?`<section><h2>Medições da vistoria</h2><table><thead><tr><th>Trecho</th><th>Largura</th><th>Altura</th><th>Área</th></tr></thead><tbody>${areas.map(t=>`<tr><td>${nanoProposalText(t.local||'Trecho')}</td><td>${nanoProposalText(t.largura)} m</td><td>${nanoProposalText(t.altura)} m</td><td>${(Number(t.largura)*Number(t.altura)).toLocaleString('pt-BR',{maximumFractionDigits:2})} m²</td></tr>`).join('')}</tbody></table></section>`:'';
+    const observations=[ficha.condicoes,ficha.obs].filter(x=>String(x||'').trim()).map(x=>`<p>${nanoProposalText(x)}</p>`).join('');
+    const payOptions=[['pag_pix','PIX'],['pag_debito','Cartão de débito'],['pag_credito','Cartão de crédito em até 10 vezes (com acréscimo sujeito a simulação e confirmação)'],['pag_dinheiro','Dinheiro']];
+    const selectedPayments=payOptions.filter(([id])=>ficha[id]===true).map(([,label])=>label);
+    const paymentText=nanoProposalText(selectedPayments.join(' · ')||'A combinar — orçamento anterior ao cadastro das condições de pagamento');
+    const full=kind==='completa';
+    const content=`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${full?'Proposta completa':'Proposta resumida'} ${number} - Nano4You</title><style>
+      *{box-sizing:border-box}
+      body{margin:0;color:#183449;font:12.5px/1.43 Arial,Helvetica,sans-serif;background:#edf2f6}
+      .sheet{max-width:820px;margin:20px auto;background:white;padding:30px 40px;box-shadow:0 5px 22px #0001}
+      header{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:18px 20px;background:#073a65;color:white;border-radius:9px}
+      .logo{font-size:28px;font-weight:900;letter-spacing:-1px}.logo em{color:#49d3be;font-style:normal}
+      .sub{font-size:10px;letter-spacing:1.5px;color:#c6e7f6}.headright{text-align:right;font-size:11.5px}
+      h1{font-size:21px;color:#073a65;margin:20px 0 3px;line-height:1.2}
+      h2{font-size:14px;border-bottom:1px solid #b8d5e4;color:#075886;padding-bottom:5px;margin:15px 0 8px}
+      p{margin:5px 0}section{break-inside:avoid-page}
+      section.photo-section{break-inside:auto;page-break-inside:auto} .photo-section h2{break-after:avoid-page}
+      .detail{display:flex;justify-content:space-between;gap:14px;padding:4px 0;border-bottom:1px solid #edf0f3}
+      .detail span{color:#536a78}.detail b{text-align:right;overflow-wrap:anywhere}
+      .cols{display:grid;grid-template-columns:1fr 1fr;gap:10px 20px}
+      .total{margin-top:10px;background:#eaf6fa;border-left:5px solid #0874a3;padding:11px 15px;display:flex;justify-content:space-between;gap:12px;align-items:center;font-size:17px;font-weight:bold}
+      .total strong{white-space:nowrap}
+      .photos{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}
+      .photos.photos-single{grid-template-columns:minmax(0,1fr);max-width:480px;margin:0 auto}
+      .photos figure{margin:0;break-inside:avoid;page-break-inside:avoid;border:1px solid #e0e9ef;border-radius:7px;padding:7px;background:#fbfdfe}
+      .photos img{display:block;width:100%;height:220px;object-fit:contain;background:#f3f7f9;border-radius:5px}
+      .photos.photos-single img{height:330px}
+      .photos figcaption{font-size:11px;color:#536c7d;padding:6px 2px 0}
+      .photo-intro{font-size:11px;color:#627786;margin:0 0 9px}
+      table{border-collapse:collapse;width:100%;font-size:12px}th,td{border-bottom:1px solid #dce8ee;text-align:left;padding:6px}th{background:#eef6fa}
+      .muted,footer{color:#647786;font-size:11px}
+      .notice{background:#fff7e6;border-left:4px solid #d5a747;padding:9px 11px;margin-top:12px;font-size:11px;break-inside:avoid}
+      footer{border-top:1px solid #cfdee7;padding-top:10px;margin-top:18px;text-align:center;break-inside:avoid}
+      .toolbar{position:sticky;top:0;background:#fff;display:flex;justify-content:center;align-items:center;gap:10px;padding:12px;box-shadow:0 2px 10px #0002;flex-wrap:wrap}
+      .toolbar button{border:0;border-radius:7px;padding:12px 22px;cursor:pointer;background:#08689b;color:white;font-weight:bold}
+      .toolbar .secondary{background:#e2e9ec;color:#18405b}
+      .print-tip{max-width:330px;color:#405d70;font-size:11px}
+      @page{size:A4;margin:11mm}
+      @media print{
+        body{background:white;font-size:11.8px;line-height:1.35}
+        .sheet{box-shadow:none;max-width:none;margin:0;padding:0}
+        .toolbar{display:none!important}
+        header{padding:15px 18px}
+        h1{font-size:19px;margin:15px 0 3px}
+        h2{margin:12px 0 7px}
+        .detail{padding:3px 0}
+        .total{margin-top:8px;padding:9px 13px;font-size:16px}
+        .photos img{height:190px}
+        .photos.photos-single img{height:300px}
+        /* Proposta sem fotografias: não deixar o rodapé isolado na página 2. */
+        .sheet.without-photos header{padding:12px 16px}
+        .sheet.without-photos h1{font-size:18px;margin:12px 0 2px}
+        .sheet.without-photos h2{font-size:12.5px;margin:9px 0 5px;padding-bottom:4px}
+        .sheet.without-photos p{margin:3px 0}
+        .sheet.without-photos .detail{padding:2px 0}
+        .sheet.without-photos th,.sheet.without-photos td{padding:4px 6px}
+        .sheet.without-photos .total{margin-top:7px;padding:8px 12px;font-size:15px}
+        .sheet.without-photos .notice{margin-top:8px;padding:7px 9px;font-size:10px}
+        .sheet.without-photos footer{margin-top:10px;padding-top:7px;font-size:10px}
+        header,.total,.notice,th{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      }
+      @media(max-width:600px){
+        .sheet{margin:0;padding:15px}.cols{grid-template-columns:1fr}
+        .photos{grid-template-columns:1fr}
+        header{padding:13px}.logo{font-size:22px}
+        .total{font-size:15px}
+      }
+      </style></head><body><div class="toolbar"><button onclick="window.print()">Imprimir / Salvar em PDF</button><span class="print-tip">Para um PDF limpo, em Mais configurações desmarque “Cabeçalhos e rodapés”. O navegador controla essa opção.</span><button class="secondary" onclick="window.close()">Fechar</button></div><main class="sheet ${images.length?'with-photos':'without-photos'}"><header><div><div class="logo">NANO<em>4</em>YOU</div><div class="sub">SOLUÇÕES EM FACHADAS</div></div><div class="headright">(47) 98824-6018<br>Limpeza e revitalização de fachadas</div></header><h1>PROPOSTA COMERCIAL ${full?'COMPLETA':'RESUMIDA'}</h1><p class="muted">Nº ${number} · Registro ${nanoProposalDate(o.created_at)} · Responsável comercial: ${nanoProposalText(v?.nome||'Equipe Nano4You')}</p><section><h2>Dados do cliente</h2><div class="cols"><div>${line('Empresa',nanoProposalText(c.nome_cliente))}${line('Responsável',nanoProposalText(c.responsavel))}</div><div>${line('Telefone',nanoProposalText(c.telefone))}${line('Cidade',nanoProposalText(c.cidade))}</div></div><p><b>Endereço da fachada:</b> ${nanoProposalText(c.endereco)}</p></section><section><h2>Objeto da proposta</h2><p>Prestação de serviços de limpeza e revitalização de fachada, conforme medição e avaliação das condições técnicas, sujeita à confirmação do escopo e das necessidades de segurança e acesso.</p>${full?`<p><b>Material:</b> ${nanoProposalText(ficha.material||'A confirmar')} · <b>Conservação:</b> ${nanoProposalText(ficha.estado||'A confirmar')} · <b>Acesso:</b> ${nanoProposalText(ficha.acesso||'A avaliar')}</p>`:''}</section>${full?trHtml:''}<section><h2>Investimento</h2>${line('Área medida',nanoProposalText(o.area_m2)+' m²')}${line('Valor por m²',money(o.valor_m2))}${line('Valor-base',money(gross))}${additional?line('Custos adicionais',money(additional)):''}${discount?line('Desconto autorizado',`- ${money(discount)}`):''}<div class="total"><span>VALOR TOTAL DA PROPOSTA</span><strong>${money(total)}</strong></div></section><section><h2>Condições comerciais</h2>${line('Prazo estimado',nanoProposalText(ficha.prazo||'A definir'))}${line('Validade da proposta',nanoProposalDate(ficha.validade))}${line('Formas de pagamento',paymentText)}${full&&observations?`<h2>Observações da vistoria</h2>${observations}`:''}</section>${full?pics:''}${imageWarning?`<p class="notice">${nanoProposalText(imageWarning)}</p>`:''}<div class="notice">Proposta preliminar, sujeita à confirmação técnica e às condições de acesso. Serviços em altura dependem de avaliação de segurança. Fotografias registram as condições da visita; eventuais simulações visuais deverão ser identificadas como ilustrativas.</div><footer>Nano4You · Soluções em Fachadas · WhatsApp (47) 98824-6018<br>Documento emitido com os dados e valores registrados no sistema.</footer></main></body></html>`;
+    popup.document.open();popup.document.write(content);popup.document.close();
+  }catch(e){popup.document.body.textContent='Não foi possível preparar a proposta: '+e.message;alert('Falha ao gerar a proposta: '+e.message)}
+}
+function nanoProposalActions(host,order){
+  const group=admNode('div',undefined,'nano-proposal-actions');
+  const complete=admNode('button','Proposta completa (PDF)','secondary');complete.type='button';complete.onclick=()=>nanoGenerateProposal(order,'completa');
+  const short=admNode('button','Proposta resumida (PDF)','secondary');short.type='button';short.onclick=()=>nanoGenerateProposal(order,'resumida');
+  group.append(complete,short);host.append(group);
+}
+
 // Histórico enriquecido com nomes relacionados. Consultas respeitam as políticas RLS.
 async function labelsFor(table,ids,columns){
  const unique=[...new Set(ids.filter(Boolean))];
@@ -106,6 +230,7 @@ $('nanoHistoryBtn').onclick=async()=>{$('nanoAdmin').style.display='none';
    if(profile?.perfil==='administrador')detail.push('Vendedor: '+(sellers.get(r.vendedor_id)?.nome||'Não identificado'));
    if(detail.length){const line=document.createElement('div');line.style.cssText='color:#627786;font-size:12px;margin-bottom:8px';line.textContent=detail.join(' · ');li.append(line)}
    const b=document.createElement('button');b.type='button';b.textContent='Ver fotos';b.className='secondary';b.onclick=()=>showOrderPhotos(r.id,r.vendedor_id);li.append(b);
+    nanoProposalActions(li,r);
     const stageWrap=admNode('div');stageWrap.style.cssText='display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0';const stageSelect=document.createElement('select');stageSelect.style.cssText='width:auto;min-width:170px';nanoStageOptions.forEach(([v,l])=>stageSelect.add(new Option(l,v)));stageSelect.value=historyStages.get(r.id)?.situacao||(r.status==='aprovado'?'aprovado':'em_vistoria');const stageBtn=admNode('button','Atualizar situação','secondary');stageBtn.type='button';stageBtn.onclick=async()=>{let reason=null;if(stageSelect.value==='perdido'){reason=prompt('Informe obrigatoriamente o motivo da perda:');if(reason===null)return;if(!reason.trim()){alert('O motivo é obrigatório.');return}}else{reason=prompt('Observação da atualização (opcional):','');if(reason===null)return}stageBtn.disabled=true;try{await request('/rest/v1/rpc/nano_registrar_etapa','POST',{p_orcamento_id:r.id,p_situacao:stageSelect.value,p_motivo:reason?.trim()||null});$('nanoHistoryBtn').click();msg('Situação comercial atualizada.')}catch(e){alert('Não foi possível atualizar: '+e.message)}finally{stageBtn.disabled=false}};stageWrap.append(stageSelect,stageBtn);li.append(stageWrap);
     const discounts=historyDiscounts.filter(d=>d.orcamento_id===r.id);
     nanoDiscountInfo(li,discounts);
@@ -260,6 +385,7 @@ if(Array.isArray(ficha.trechos)&&ficha.trechos.length){box.append(admNode('h3','
 const stage=admState.stages.get(o.id);if(stage){const s=admNode('p');s.append(admNode('strong','Última atualização comercial: '),document.createTextNode(new Date(stage.criado_em).toLocaleString('pt-BR')));box.append(s);if(stage.motivo)box.append(admNode('p','Motivo / observação: '+stage.motivo))}
 const editor=admNode('div',undefined,'adm-status-form');const lbl=admNode('label','Atualizar situação comercial');const sel=document.createElement('select');sel.setAttribute('aria-label','Nova situação comercial');for(const [value,title] of nanoStageOptions)sel.add(new Option(title,value));sel.value=nanoCurrentStage(o);const reason=document.createElement('textarea');reason.placeholder='Observação opcional; obrigatória para Negócio perdido';reason.setAttribute('aria-label','Motivo ou observação da mudança');reason.style.display=sel.value==='perdido'?'block':'none';sel.onchange=()=>{reason.style.display=sel.value==='perdido'?'block':'none'};const submit=admNode('button','Salvar situação');submit.type='button';submit.onclick=async()=>{if(sel.value==='perdido'&&!reason.value.trim()){alert('Informe o motivo da perda da negociação.');reason.focus();return}if(!confirm('Registrar a situação comercial deste orçamento?'))return;submit.disabled=true;try{await request('/rest/v1/rpc/nano_registrar_etapa','POST',{p_orcamento_id:o.id,p_situacao:sel.value,p_motivo:reason.value.trim()||null});await admReload();const updated=admState.orders.find(x=>x.id===o.id);if(updated)admShowDetails(updated);msg('Situação comercial registrada com sucesso.')}catch(e){alert('Não foi possível atualizar a situação: '+e.message)}finally{submit.disabled=false}};editor.append(lbl,sel,reason,submit);box.append(editor);
 nanoAdminDiscountDetail(box,o);
+ nanoProposalActions(box,o);
  const pb=admNode('button','Ver fotos','secondary');pb.type='button';pb.onclick=()=>showOrderPhotos(o.id,o.vendedor_id,box);box.append(pb);box.scrollIntoView({behavior:'smooth',block:'start'});
 }
 function admRender(){
