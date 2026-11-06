@@ -1,6 +1,6 @@
 // Nano4You — service worker da versão oficial.
 // Rede primeiro: novas publicações prevalecem sobre cópias antigas.
-const CACHE = 'nano4you-oficial-shell-v1-20261104';
+const CACHE = 'nano4you-oficial-shell-v2-pagamentos-20261106';
 const ASSETS = ['./', './index.html', './nano-app.js', './config.js'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
