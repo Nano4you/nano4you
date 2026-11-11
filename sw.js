@@ -1,7 +1,7 @@
 // Nanotech Serviços — service worker da versão oficial.
 // Rede primeiro: novas publicações prevalecem sobre cópias antigas.
-const CACHE = 'nano4you-oficial-shell-v4-nanotech-20261111';
-const ASSETS = ['./', './index.html', './nano-app.js', './nano-app.js?v=nanotech-20261111', './config.js', './nanotech-logo.webp'];
+const CACHE = 'nano4you-oficial-shell-v5-aceite-pdf-20261111';
+const ASSETS = ['./', './index.html', './nano-app.js', './nano-app.js?v=aceite-pdf-20261111', './config.js', './nanotech-logo.webp'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
 });
